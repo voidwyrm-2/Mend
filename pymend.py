@@ -205,8 +205,7 @@ def interpret(code: str | list[str] | tuple[str]):
                     elif len(toks) > 2:
                         pass
                     else: log_error('malformed variable declaration', ln)
-
-
+        
         ln += 1
 
 
