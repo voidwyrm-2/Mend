@@ -12,4 +12,4 @@ but you can do whatever you want with the code as long as you use the same licen
 
 <br><br><br>
 
-~~The name is a funny joke if you because it's based off of Scratch and mend is the opposite of scratch haha really funny my friends call me a comedian sometimes~~
+~~The name is a funny joke because it's based off of Scratch and mend is the opposite of scratch haha really funny my friends call me a comedian sometimes~~
