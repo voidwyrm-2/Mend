@@ -1,5 +1,6 @@
 from enum import Enum
 from random import randint
+from typing import Any
 
 
 
@@ -48,6 +49,10 @@ class ImmutDict:
     
     def remove(self, key):
         if key in list(self.val): self.val.pop(key)
+    
+    def keys(self): return self.val.keys()
+    
+    def __str__(self): return str(self.val)
 
 
 
@@ -162,6 +167,19 @@ class LineLexer:
         return Token(TT.COMMENT, comment_str)
 
 
+class AnyToken: pass
+
+def ofvalue(v, check): return v in check if type(v) in (tuple, list) else v == check
+
+def istoken(tok: Token, type: Any | tuple[Any] = AnyToken, value: Any | tuple[Any] = AnyToken):
+    print(f'{tok}, {type}, {value}, {tok.type == type}, {tok.value == value}')
+    if type == AnyToken and value == AnyToken: return isinstance(tok, Token)
+    if type == AnyToken: return ofvalue(tok.value, value)
+    if value == AnyToken: return ofvalue(tok.type, type)
+    return ofvalue(tok.type, type) and ofvalue(tok.value, value)
+
+
+
 def getstate(left: Token, op: Token, right: Token, line: int):
     try:
         match op.value:
@@ -185,11 +203,11 @@ def get_list(toks: list[Token], line, starting_idx: int = 4, return_as_failure =
     c_tok = starting_idx
     acc = []
     looking_for_comma = False
-    while toks[c_tok].type != TT.RBRACKET:
+    while istoken(toks[c_tok], TT.RBRACKET):
         if looking_for_comma:
-            if toks[c_tok].type != TT.COMMA: log_error('malformed variable declaration', line); return return_as_failure() if call_raf else return_as_failure
-        elif toks[3].type in (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL): acc.append(toks[3].value)
-        elif toks[3].type == TT.RBRACKET:
+            if not istoken(toks[c_tok], TT.COMMA): log_error('malformed variable declaration', line); return return_as_failure() if call_raf else return_as_failure
+        elif istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): acc.append(toks[3].value)
+        elif istoken(toks[3], TT.RBRACKET):
             ngotten = get_list(toks, c_tok+1, return_as_failure, call_raf)
             if call_raf:
                 if isinstance(ngotten, return_as_failure): return ngotten
@@ -206,7 +224,7 @@ def interpret(code: str | list[str] | tuple[str]):
 
     token_lines = [[t for t in LineLexer(l).lex_to_tokens() if t.type != TT.COMMENT] for l in lines]
 
-    for tl in token_lines: print(tl)
+    #for tl in token_lines: print(tl)
     
     # flags
     jump_to_next_end = False
@@ -219,9 +237,9 @@ def interpret(code: str | list[str] | tuple[str]):
         
         if len(toks) < 1: ln += 1; continue
         else:
-            print(toks)
+            #print(toks)
             if jump_to_next_end:
-                if toks[0].type == TT.KEYWORD and toks[0].value == 'end':
+                if istoken(toks[0], TT.KEYWORD, 'end'):
                     jump_to_next_end = False
                     ln += 1
                     continue
@@ -229,15 +247,18 @@ def interpret(code: str | list[str] | tuple[str]):
                     ln += 1
                     continue
             for t in toks:
-                if t.type == TT.ILLEGAL:
+                if istoken(t, TT.ILLEGAL):
                     log_error(f"illegal char '{t.value}'", ln)
                     return
+                
+            print(istoken(toks[0], TT.KEYWORD))
+            print('\n\n')
 
-            if toks[0].type == TT.KEYWORD:
-                if toks[0].value == 'stop': return
-                elif toks[0].value == 'log':
+            if istoken(toks[0], TT.KEYWORD):
+                if istoken(toks[0], value='stop'): return
+                elif istoken(toks[0], value='log'):
                     if len(toks) >= 2:
-                        if toks[1].type == TT.IDENT:
+                        if istoken(toks[1], TT.IDENT):
                             not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
                             from_mutable = vars.get(toks[1].value, not_found_id)
                             if from_mutable == not_found_id:
@@ -248,27 +269,27 @@ def interpret(code: str | list[str] | tuple[str]):
                             else: print(from_mutable)
                         else: print(toks[1].value)
                     else: print()
-                elif toks[0].value == 'get':
+                elif istoken(toks[0], value='get'):
                     if len(toks) >= 2:
-                        if toks[1].type == TT.IDENT:
+                        if istoken(toks[1], TT.IDENT):
                             uinp = input('give input\n')
                             consts.add(toks[1].value, uinp)
-                elif toks[0].value == 'if':
-                    if toks[-1].type != TT.KEYWORD or toks[-1].value != 'then':
+                elif istoken(toks[0], value='if'):
+                    if not istoken(toks[-1], TT.KEYWORD, 'then'):
                         log_error("missing 'then' to close 'if'", ln)
                         return
-                elif toks[0].value == 'mut':
+                elif istoken(toks[0], value='mut'):
                     if len(toks) == 2:
-                        if toks[1].type == TT.IDENT:
-                            if toks[1].value in list(vars.keys()): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
+                        if istoken(toks[1], TT.IDENT):
+                            if istoken(toks[1], value=tuple(vars.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
                             vars[toks[1].value] = None
                         else: log_error('malformed variable declaration', ln)
                     elif len(toks) >= 4:
-                        if toks[1].type == TT.IDENT and toks[2].type == TT.KEYWORD and toks[2].value == 'as':
-                            if toks[1].value in list(vars.keys()): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
-                            if toks[3].type in (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL): vars[toks[1].value] = toks[3].value
+                        if istoken(toks[1], TT.IDENT) and istoken(toks[2], TT.KEYWORD, 'as'):
+                            if istoken(toks[1], value=tuple(vars.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
+                            if istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): vars[toks[1].value] = toks[3].value
                             #elif toks[3].type == TT.KEYWORD: pass
-                            elif toks[3].type == TT.IDENT:
+                            elif istoken(toks[3], TT.IDENT):
                                 not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
                                 from_mutable = vars.get(toks[1].value, not_found_id)
                                 if from_mutable == not_found_id:
@@ -277,41 +298,44 @@ def interpret(code: str | list[str] | tuple[str]):
                                         log_error(f"malformed variable declaration(unknown variable '{toks[1].value}')", ln)
                                     else: vars[toks[1].value] = from_immutable
                                 else: vars[toks[1].value] = from_mutable
-                            elif toks[3].type == TT.LBRACKET:
+                            elif istoken(toks[3], TT.LBRACKET):
                                 ls = get_list(toks, ln)
                                 if isinstance(ls, listgetter_fail): return
                                 vars[toks[1].value] = ls
                             else: log_error('malformed variable declaration', ln)
                         else: log_error('malformed variable declaration', ln)
                     else: log_error('malformed variable declaration', ln)
-                elif toks[0].value == 'immut':
+                elif istoken(toks[0], value='immut'):
                     if len(toks) == 2:
-                        if toks[1].type == TT.IDENT:
-                            if toks[1].value in list(vars.keys()): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
+                        if istoken(toks[1], TT.IDENT):
+                            if istoken(toks[1], value=tuple(consts.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
                             vars[toks[1].value] = None
                         else: log_error('malformed variable declaration', ln)
                     elif len(toks) >= 4:
-                        if toks[1].type == TT.IDENT and toks[2].type == TT.KEYWORD and toks[2].value == 'as':
-                            if toks[1].value in list(vars.keys()): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
-                            if toks[3].type in (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL): vars[toks[1].value] = toks[3].value
+                        if istoken(toks[1], TT.IDENT) and istoken(toks[2], TT.KEYWORD, 'as'):
+                            if istoken(toks[1], value=tuple(consts.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
+                            if istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): consts[toks[1].value] = toks[3].value
                             #elif toks[3].type == TT.KEYWORD: pass
-                            elif toks[3].type == TT.IDENT:
+                            elif istoken(toks[3], TT.IDENT):
                                 not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
-                                from_mutable = vars.get(toks[1].value, not_found_id)
+                                from_mutable = consts.get(toks[1].value, not_found_id)
                                 if from_mutable == not_found_id:
                                     from_immutable = consts.get(toks[1].value, not_found_id)
                                     if from_immutable == not_found_id:
                                         log_error(f"malformed variable declaration(unknown variable '{toks[1].value}')", ln)
-                                    else: vars[toks[1].value] = from_immutable
-                                else: vars[toks[1].value] = from_mutable
-                            elif toks[3].type == TT.LBRACKET:
+                                    else: consts[toks[1].value] = from_immutable
+                                else: consts[toks[1].value] = from_mutable
+                            elif istoken(toks[3], TT.LBRACKET):
                                 ls = get_list(toks, ln)
                                 if isinstance(ls, listgetter_fail): return
-                                vars[toks[1].value] = ls
+                                consts[toks[1].value] = ls
                             else: log_error('malformed variable declaration', ln)
                         else: log_error('malformed variable declaration', ln)
                     else: log_error('malformed variable declaration', ln)
-                elif toks[0].value == 'set': pass
+                elif istoken(toks[0], value='set'): pass
+        
+        #print(vars)
+        #print(consts)
         
         ln += 1
 
