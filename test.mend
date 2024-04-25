@@ -1,25 +1,13 @@
 -- basic Mend language test
 
-get typed
+--get typed
 
 -- oh wow so cool
 
-log typed
+--log typed
 
 
-stop
-
-
--- if statement test
-
-if typed is C_a then
-    repeat 10
-        log "what?"
-    end
-end
-
-
-stop
+--stop
 
 
 -- variable test
@@ -37,3 +25,21 @@ immut y as "I'm invincible!"
 log y
 
 set y as "NUH-UH"
+
+
+stop
+
+
+-- if statement test
+
+if typed is "a" then
+    repeat 10
+        log "help"
+    end
+end
+
+
+stop
+
+
+-- function test
