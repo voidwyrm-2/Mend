@@ -1,0 +1,39 @@
+-- basic Mend language test
+
+get typed
+
+-- oh wow so cool
+
+log typed
+
+
+stop
+
+
+-- if statement test
+
+if typed is C_a then
+    repeat 10
+        log "what?"
+    end
+end
+
+
+stop
+
+
+-- variable test
+
+mut x as "hello world"
+
+log x
+
+set x as "this is a really good way to parse a language, it's the best of both worlds"
+
+log x
+
+immut y as "I'm invincible!"
+
+log y
+
+set y as "NUH-UH"
