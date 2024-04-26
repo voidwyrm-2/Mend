@@ -26,6 +26,11 @@ log y
 
 set y as "NUH-UH"
 
+mut z as ["help", "me", "please"]
+
+y
+
+AHH()
 
 stop
 
@@ -43,3 +48,9 @@ stop
 
 
 -- function test
+
+func testfunc()
+    log "hello world"
+end
+
+testfunc()

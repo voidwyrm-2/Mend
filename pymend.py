@@ -32,6 +32,7 @@ KEYWORDS = [
     'nil',
     'as',
     'func',
+    'return',
     'stop',
 ]
 
@@ -39,20 +40,24 @@ KEYWORDS = [
 
 class ImmutDict:
     def __init__(self):
-        self.val = {}
+        self.__val = {}
     
     def get(self, key, default=None):
-        return self.val.get(key, default)
+        return self.__val.get(key, default)
 
     def add(self, key, value):
-        if key not in list(self.val): self.val[key] = value
+        if key not in list(self.__val): self.__val[key] = value
     
     def remove(self, key):
-        if key in list(self.val): self.val.pop(key)
+        if key in list(self.__val): self.__val.pop(key)
     
-    def keys(self): return self.val.keys()
+    def keys(self): return self.__val.keys()
+
+    def values(self): return self.__val.values()
+
+    #def extend(self, ):
     
-    def __str__(self): return str(self.val)
+    def __str__(self): return str(self.__val)
 
 
 
@@ -150,7 +155,7 @@ class LineLexer:
         while self.c_char != None and self.c_char in VALID_FOR_VARNAMES:
             ident_str += self.c_char
             self.advance()
-        self.advance()
+        #self.advance()
         if ident_str in KEYWORDS:
             return Token(TT.KEYWORD, ident_str)
         return Token(TT.IDENT, ident_str)
@@ -167,16 +172,22 @@ class LineLexer:
         return Token(TT.COMMENT, comment_str)
 
 
-class AnyToken: pass
 
-def ofvalue(v, check): return v in check if type(v) in (tuple, list) else v == check
+class AnyToken:
+    def __str__(self): return 'AnyToken'
 
 def istoken(tok: Token, type: Any | tuple[Any] = AnyToken, value: Any | tuple[Any] = AnyToken):
-    print(f'{tok}, {type}, {value}, {tok.type == type}, {tok.value == value}')
+    ofvalue = lambda v, check: v in check if isinstance(check, (tuple, list)) else v == check
+    #print(f'{tok}, {type}, {value}, {tok.type == type}, {tok.value == value}')
     if type == AnyToken and value == AnyToken: return isinstance(tok, Token)
     if type == AnyToken: return ofvalue(tok.value, value)
     if value == AnyToken: return ofvalue(tok.type, type)
     return ofvalue(tok.type, type) and ofvalue(tok.value, value)
+
+def hastoken(tokens: list[Token], type: Any | tuple[Any] = AnyToken, value: Any | tuple[Any] = AnyToken):
+    for t in tokens:
+        if istoken(t, type, value): return True
+    return False
 
 
 
@@ -195,7 +206,9 @@ def getstate(left: Token, op: Token, right: Token, line: int):
             case x: return None
     except ValueError as e: log_error(e, line); return None
 
+
 def log_error(details: str, line: int): print(f"error: {details} on line {line+1}")
+
 
 class listgetter_fail: pass
 
@@ -203,34 +216,48 @@ def get_list(toks: list[Token], line, starting_idx: int = 4, return_as_failure =
     c_tok = starting_idx
     acc = []
     looking_for_comma = False
-    while istoken(toks[c_tok], TT.RBRACKET):
+    while not istoken(toks[c_tok], TT.RBRACKET):
         if looking_for_comma:
-            if not istoken(toks[c_tok], TT.COMMA): log_error('malformed variable declaration', line); return return_as_failure() if call_raf else return_as_failure
-        elif istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): acc.append(toks[3].value)
-        elif istoken(toks[3], TT.RBRACKET):
-            ngotten = get_list(toks, c_tok+1, return_as_failure, call_raf)
-            if call_raf:
-                if isinstance(ngotten, return_as_failure): return ngotten
-            else:
-                if ngotten == return_as_failure: return ngotten
-            acc.append(ngotten)
-        else: log_error('malformed variable declaration', line); return return_as_failure() if call_raf else return_as_failure
+            if not istoken(toks[c_tok], TT.COMMA): log_error('malformed variable declaration(missing comma)', line); return return_as_failure() if call_raf else return_as_failure
+            c_tok += 1
+            looking_for_comma = False
+        else:
+            if istoken(toks[c_tok], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): acc.append(toks[c_tok].value); looking_for_comma = True; c_tok += 1
+            elif istoken(toks[c_tok], TT.LBRACKET):
+                ngotten = get_list(toks, line, c_tok+1, return_as_failure, call_raf)
+                if call_raf:
+                    if isinstance(ngotten, return_as_failure): return ngotten
+                else:
+                    if ngotten == return_as_failure: return ngotten
+                acc.append(ngotten)
+                looking_for_comma = True
+                c_tok += 1
+            else: log_error(f"malformed variable declaration(invalid type '{toks[c_tok].type}')", line); return return_as_failure() if call_raf else return_as_failure
     return acc
-                                        
 
 
-def interpret(code: str | list[str] | tuple[str]):
-    lines = code.split('\n') if isinstance(code, str) else list(code)
+class Null:
+    def __str__(self): return 'null'
 
-    token_lines = [[t for t in LineLexer(l).lex_to_tokens() if t.type != TT.COMMENT] for l in lines]
-
-    #for tl in token_lines: print(tl)
-    
+def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: bool = False):
     # flags
     jump_to_next_end = False
 
     vars = {}
     consts = ImmutDict()
+    funcs: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]] = {
+        'AHH': (
+            (),
+            ([Token(TT.KEYWORD, 'log'), Token(TT.STRING, 'AHHHHHHHHHHHHHHHHHHHHHHH')],)
+        )
+    }
+
+    caches = {
+        'funcs': []
+    }
+
+    #if isfunc: print(token_lines)
+
     ln = 0
     while ln < len(token_lines):
         toks = token_lines[ln]
@@ -239,23 +266,17 @@ def interpret(code: str | list[str] | tuple[str]):
         else:
             #print(toks)
             if jump_to_next_end:
-                if istoken(toks[0], TT.KEYWORD, 'end'):
-                    jump_to_next_end = False
-                    ln += 1
-                    continue
-                else:
-                    ln += 1
-                    continue
+                if istoken(toks[0], TT.KEYWORD, 'end'): jump_to_next_end = False
+                ln += 1
+                continue
             for t in toks:
                 if istoken(t, TT.ILLEGAL):
                     log_error(f"illegal char '{t.value}'", ln)
                     return
-                
-            print(istoken(toks[0], TT.KEYWORD))
-            print('\n\n')
 
             if istoken(toks[0], TT.KEYWORD):
                 if istoken(toks[0], value='stop'): return
+
                 elif istoken(toks[0], value='log'):
                     if len(toks) >= 2:
                         if istoken(toks[1], TT.IDENT):
@@ -269,76 +290,110 @@ def interpret(code: str | list[str] | tuple[str]):
                             else: print(from_mutable)
                         else: print(toks[1].value)
                     else: print()
+                
                 elif istoken(toks[0], value='get'):
                     if len(toks) >= 2:
                         if istoken(toks[1], TT.IDENT):
                             uinp = input('give input\n')
-                            consts.add(toks[1].value, uinp)
+                            vars[toks[1].value] = uinp
+                
                 elif istoken(toks[0], value='if'):
                     if not istoken(toks[-1], TT.KEYWORD, 'then'):
                         log_error("missing 'then' to close 'if'", ln)
                         return
+                
                 elif istoken(toks[0], value='mut'):
                     if len(toks) == 2:
                         if istoken(toks[1], TT.IDENT):
                             if istoken(toks[1], value=tuple(vars.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
-                            vars[toks[1].value] = None
-                        else: log_error('malformed variable declaration', ln)
+                            vars[toks[1].value] = Null()
+                        else: log_error('malformed variable declaration(missing variable name)', ln); return
                     elif len(toks) >= 4:
                         if istoken(toks[1], TT.IDENT) and istoken(toks[2], TT.KEYWORD, 'as'):
                             if istoken(toks[1], value=tuple(vars.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
                             if istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): vars[toks[1].value] = toks[3].value
-                            #elif toks[3].type == TT.KEYWORD: pass
+                            elif istoken(toks[3], TT.KEYWORD):
+                                if istoken(toks[3], value='get'): vars[toks[1].value] = input('give input\n')
+                                else:
+                                    log_error(f"malformed variable declaration(invalid keyword '{toks[3].value}')", ln); return
                             elif istoken(toks[3], TT.IDENT):
                                 not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
                                 from_mutable = vars.get(toks[1].value, not_found_id)
                                 if from_mutable == not_found_id:
                                     from_immutable = consts.get(toks[1].value, not_found_id)
                                     if from_immutable == not_found_id:
-                                        log_error(f"malformed variable declaration(unknown variable '{toks[1].value}')", ln)
+                                        log_error(f"malformed variable declaration(unknown variable '{toks[1].value}')", ln); return
                                     else: vars[toks[1].value] = from_immutable
                                 else: vars[toks[1].value] = from_mutable
                             elif istoken(toks[3], TT.LBRACKET):
                                 ls = get_list(toks, ln)
                                 if isinstance(ls, listgetter_fail): return
                                 vars[toks[1].value] = ls
-                            else: log_error('malformed variable declaration', ln)
-                        else: log_error('malformed variable declaration', ln)
-                    else: log_error('malformed variable declaration', ln)
+                            else: log_error(f"malformed variable declaration(invalid value '{toks[3].value}')", ln); return
+                        else: log_error(f"malformed variable declaration(missing variable name and 'as' keyword)", ln); return
+                    else: log_error('malformed variable declaration(missing variable name)', ln); return
+                
                 elif istoken(toks[0], value='immut'):
                     if len(toks) == 2:
                         if istoken(toks[1], TT.IDENT):
                             if istoken(toks[1], value=tuple(consts.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
-                            vars[toks[1].value] = None
-                        else: log_error('malformed variable declaration', ln)
+                            consts.add(toks[1].value, Null())
+                        else: log_error('malformed variable declaration(missing variable name)', ln); return
                     elif len(toks) >= 4:
                         if istoken(toks[1], TT.IDENT) and istoken(toks[2], TT.KEYWORD, 'as'):
                             if istoken(toks[1], value=tuple(consts.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
-                            if istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): consts[toks[1].value] = toks[3].value
-                            #elif toks[3].type == TT.KEYWORD: pass
+                            if istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): consts.add(toks[1].value, toks[3].value)
+                            elif istoken(toks[3], TT.KEYWORD):
+                                consts.add(toks[1].value,input('give input\n'))
                             elif istoken(toks[3], TT.IDENT):
                                 not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
                                 from_mutable = consts.get(toks[1].value, not_found_id)
                                 if from_mutable == not_found_id:
                                     from_immutable = consts.get(toks[1].value, not_found_id)
                                     if from_immutable == not_found_id:
-                                        log_error(f"malformed variable declaration(unknown variable '{toks[1].value}')", ln)
-                                    else: consts[toks[1].value] = from_immutable
-                                else: consts[toks[1].value] = from_mutable
+                                        log_error(f"malformed variable declaration(unknown variable '{toks[1].value}')", ln); return
+                                    else: consts.add(toks[1].value, from_immutable)
+                                else: consts.add(toks[1].value, from_mutable)
                             elif istoken(toks[3], TT.LBRACKET):
                                 ls = get_list(toks, ln)
                                 if isinstance(ls, listgetter_fail): return
-                                consts[toks[1].value] = ls
-                            else: log_error('malformed variable declaration', ln)
-                        else: log_error('malformed variable declaration', ln)
-                    else: log_error('malformed variable declaration', ln)
+                                consts.add(toks[1].value, ls)
+                            else: log_error(f"malformed variable declaration(invalid value '{toks[3].value}')", ln); return
+                        else: log_error(f"malformed variable declaration(missing variable name and 'as' keyword)", ln); return
+                    else: log_error('malformed variable declaration(missing variable name)', ln); return
+                
                 elif istoken(toks[0], value='set'): pass
-        
-        #print(vars)
-        #print(consts)
+
+                elif istoken(toks[0], value='return'):
+                    if isfunc: pass
+                    else: pass
+
+            elif istoken(toks[0], TT.IDENT):
+                if istoken(toks[0], value=tuple(funcs)):
+                    if len(toks) >= 3:
+                        if istoken(toks[1], TT.LPAREN) and istoken(toks[-1], TT.RPAREN):
+                            returned = interpret(funcs[toks[0].value][1], True)
+                            if returned != None: pass
+                        else: log_error("malformed function call(missing parentheses)", ln); return
+                    elif len(toks) != 1: log_error("malformed function call(mismatched parentheses)", ln); return
+                elif istoken(toks[0], value=tuple(vars)) or istoken(toks[0], value=tuple(consts.keys())): pass
+                else: log_error(f"unknown value '{toks[0].value}'", ln); return
+
+
+        #print('vars', vars)
+        #print('consts', consts)
         
         ln += 1
+    if isimported: return vars, consts, funcs
 
 
 
-with open('./test.mend', 'rt') as f: interpret(f.read())
+def run(code: str | list[str] | tuple[str]):
+    lines = code.split('\n') if isinstance(code, str) else list(code)
+
+    token_lines = [[t for t in LineLexer(l).lex_to_tokens() if t.type != TT.COMMENT] for l in lines]
+
+    interpret(token_lines)
+
+
+with open('./test.mend', 'rt') as f: run(f.read())
