@@ -92,6 +92,7 @@ class TT(Enum):
     RPAREN = 'RPAREN'
     LBRACE = 'LBRACE'
     RBRACE = 'RBRACE'
+    STOP = 'STOP'
     EOF = 'EOF'
 
 
@@ -264,6 +265,15 @@ def get_variable(tokens: list[Token], variables: dict[str, Any], constants: Immu
     else: return None
 
 
+def record_until_endtoken(token_lines: list[list[Token]], starting_idx: int):
+    ln = starting_idx
+    out = []
+    while ln < len(token_lines):
+        if istoken(token_lines[ln][0], TT.KEYWORD, 'end'): break
+        else: out.append(token_lines[ln]); ln += 1
+    return out
+
+
 class Null:
     def __str__(self): return 'null'
 
@@ -274,7 +284,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
     jump_to_next_end = False
 
     vars: dict[str, Any] = {}
-    consts = ImmutDict()
+    consts: ImmutDict = ImmutDict()
     funcs: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]] = {
         'AHH': (
             (),
@@ -299,7 +309,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                     return
 
             if istoken(toks[0], TT.KEYWORD):
-                if istoken(toks[0], value='stop'): return
+                if istoken(toks[0], value='stop'): return TT.STOP
 
                 if istoken(toks[0], value='import'):
                     if len(toks) < 2: log_error("malformed import(missing item to import)", ln); return
@@ -399,6 +409,25 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                 elif istoken(toks[0], value='return'):
                     if isfunc: pass
                     else: log_error("invalid 'return'", ln); return
+                
+                elif istoken(toks[0], value='repeat'):
+                    amount = 0
+                    repeated = record_until_endtoken(token_lines, ln+1)
+                    if len(toks) >= 2:
+                        if istoken(toks[1], (TT.IDENT)):
+                            not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
+                            from_mutable = vars.get(toks[1].value, not_found_id)
+                            if from_mutable == not_found_id:
+                                from_immutable = consts.get(toks[1].value, not_found_id)
+                                if from_immutable == not_found_id: log_error(f"unknown variable '{toks[1].value}'", ln); return
+                                else: amount = from_immutable
+                            else: amount = from_mutable
+                        elif istoken(toks[1], (TT.INT)): amount = toks[1].value
+                        else: log_error(f"malformed repeat(invalid repeat amount {toks[1].type})", ln); return
+                    else: log_error('malformed repeat(amount not given)', ln); return
+                    for _ in range(amount):
+                        iter_result = interpret(repeated)
+                        if iter_result == TT.STOP: break
 
             elif istoken(toks[0], TT.IDENT):
                 if istoken(toks[0], value=tuple(funcs)):
@@ -410,7 +439,6 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                     elif len(toks) != 1: log_error("malformed function call(mismatched parentheses)", ln); return
                 elif istoken(toks[0], value=tuple(vars)) or istoken(toks[0], value=tuple(consts.keys())): pass
                 else: log_error(f"unknown value '{toks[0].value}'", ln); return
-
 
         #print('vars', vars)
         #print('consts', consts)
@@ -428,4 +456,4 @@ def run(code: str | list[str] | tuple[str]):
     interpret(token_lines)
 
 
-with open('./import_test.mend', 'rt') as f: run(f.read())
+with open('./repeat_test.mend', 'rt') as f: run(f.read())
