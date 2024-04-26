@@ -1,6 +1,7 @@
 from enum import Enum
 from random import randint
 from typing import Any
+from pathlib import Path
 
 
 
@@ -33,6 +34,7 @@ KEYWORDS = [
     'as',
     'func',
     'return',
+    'import',
     'stop',
 ]
 
@@ -55,9 +57,21 @@ class ImmutDict:
 
     def values(self): return self.__val.values()
 
-    #def extend(self, ):
+    def extend(self, exentsion: dict):
+        for e in list(exentsion.keys()):
+            if e not in list(self.__val.keys()): self.__val[e] = exentsion[e]
     
     def __str__(self): return str(self.__val)
+
+    def __repr__(self): return str(self.__val)
+
+
+def extend_dict(orig: dict, exentsion: dict, overwrite_existing: bool = False):
+    for e in list(exentsion):
+        if overwrite_existing: orig[e] = exentsion[e]
+        else:
+            if e not in list(orig): orig[e] = exentsion[e]
+    return orig
 
 
 
@@ -236,27 +250,37 @@ def get_list(toks: list[Token], line, starting_idx: int = 4, return_as_failure =
     return acc
 
 
+def get_variable(tokens: list[Token], variables: dict[str, Any], constants: ImmutDict, functions: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]], line: int):
+    if len(tokens) >= 2:
+        if istoken(tokens[1], TT.IDENT):
+            not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
+            from_mutable = variables.get(tokens[1].value, not_found_id)
+            if from_mutable == not_found_id:
+                from_immutable = constants.get(tokens[1].value, not_found_id)
+                if from_immutable == not_found_id: return TT.ILLEGAL
+                else: return from_immutable
+            else: return from_mutable
+        else: return tokens[1].value
+    else: return None
+
+
 class Null:
     def __str__(self): return 'null'
+
+    def __repr__(self): return 'null'
 
 def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: bool = False):
     # flags
     jump_to_next_end = False
 
-    vars = {}
+    vars: dict[str, Any] = {}
     consts = ImmutDict()
     funcs: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]] = {
         'AHH': (
             (),
-            ([Token(TT.KEYWORD, 'log'), Token(TT.STRING, 'AHHHHHHHHHHHHHHHHHHHHHHH')],)
+            ([Token(TT.KEYWORD, 'log'), Token(TT.STRING, 'A' + ('H' * 100))],)
         )
     }
-
-    caches = {
-        'funcs': []
-    }
-
-    #if isfunc: print(token_lines)
 
     ln = 0
     while ln < len(token_lines):
@@ -277,19 +301,27 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
             if istoken(toks[0], TT.KEYWORD):
                 if istoken(toks[0], value='stop'): return
 
+                if istoken(toks[0], value='import'):
+                    if len(toks) < 2: log_error("malformed import(missing item to import)", ln); return
+                    if istoken(toks[1], (TT.STRING, TT.IDENT)):
+                        if istoken(toks[1], TT.IDENT): pass
+                        import_path = toks[1].value + '.mend' if '.' not in toks[1].value.removeprefix('./') else toks[1].value
+                        if not Path(import_path).exists(): log_error(f"malformed import(path '{import_path}' doesn't exist)", ln); return
+                        try:
+                            with open(import_path, 'rt') as imp_file:
+                                imported = interpret([[t for t in LineLexer(l).lex_to_tokens() if t.type != TT.COMMENT] for l in imp_file.read().split('\n')], isimported=True)
+                                print(imported)
+                                if imported != None:
+                                    vars = extend_dict(vars, imported[0], True)
+                                    consts.extend(imported[1])
+                                    funcs = extend_dict(vars, imported[2], True)
+                        except Exception as e: log_error(f"malformed import({e})", ln)
+                    else: log_error(f"malformed import(invalid import item '{toks[1].type}')", ln); return
+
                 elif istoken(toks[0], value='log'):
-                    if len(toks) >= 2:
-                        if istoken(toks[1], TT.IDENT):
-                            not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
-                            from_mutable = vars.get(toks[1].value, not_found_id)
-                            if from_mutable == not_found_id:
-                                from_immutable = consts.get(toks[1].value, not_found_id)
-                                if from_immutable == not_found_id:
-                                    log_error(f"could not log unknown variable '{toks[1].value}'", ln)
-                                else: print(from_immutable)
-                            else: print(from_mutable)
-                        else: print(toks[1].value)
-                    else: print()
+                    var_result = get_variable(toks, vars, consts, funcs, ln)
+                    if var_result == TT.ILLEGAL: log_error(f"could not log unknown variable '{toks[1].value}'", ln); return
+                    print(var_result)
                 
                 elif istoken(toks[0], value='get'):
                     if len(toks) >= 2:
@@ -366,7 +398,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
 
                 elif istoken(toks[0], value='return'):
                     if isfunc: pass
-                    else: pass
+                    else: log_error("invalid 'return'", ln); return
 
             elif istoken(toks[0], TT.IDENT):
                 if istoken(toks[0], value=tuple(funcs)):
@@ -396,4 +428,4 @@ def run(code: str | list[str] | tuple[str]):
     interpret(token_lines)
 
 
-with open('./test.mend', 'rt') as f: run(f.read())
+with open('./import_test.mend', 'rt') as f: run(f.read())

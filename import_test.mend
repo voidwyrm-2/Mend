@@ -1,0 +1,4 @@
+import "./import_this" -- imports without an extension will be assumed to be .mend files
+
+
+log x
