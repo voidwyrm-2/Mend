@@ -74,7 +74,6 @@ def extend_dict(orig: dict, exentsion: dict, overwrite_existing: bool = False):
     return orig
 
 
-
 class TT(Enum):
     STRING = 'STRING'
     INT = 'INT'
@@ -188,6 +187,25 @@ class LineLexer:
 
 
 
+class Function:
+    def __init__(self, args: tuple[tuple[str, bool]], content: list[Token]):
+        self.__args = args
+        self.__content = content
+    
+    def run(self) -> tuple[dict[str, Any], ImmutDict, dict[str, Any]]: return interpret(self.__content, True)
+
+    def get_content(self) -> list[Token]: return self.__content
+
+    def get_args(self) -> tuple[tuple[str, bool]]: return self.__args
+
+    def has_args(self) -> bool: return len(self.__args) > 0
+
+    def isempty(self): return len(self.__content) == 0
+
+    def copy(self): return Function(self.__args, self.__content)
+
+
+
 class AnyToken:
     def __str__(self): return 'AnyToken'
 
@@ -251,18 +269,16 @@ def get_list(toks: list[Token], line, starting_idx: int = 4, return_as_failure =
     return acc
 
 
-def get_variable(tokens: list[Token], variables: dict[str, Any], constants: ImmutDict, functions: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]], line: int):
-    if len(tokens) >= 2:
-        if istoken(tokens[1], TT.IDENT):
-            not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
-            from_mutable = variables.get(tokens[1].value, not_found_id)
-            if from_mutable == not_found_id:
-                from_immutable = constants.get(tokens[1].value, not_found_id)
-                if from_immutable == not_found_id: return TT.ILLEGAL
-                else: return from_immutable
-            else: return from_mutable
-        else: return tokens[1].value
-    else: return None
+def get_variable(variable_token: Token, tokens: list[Token], variables: dict[str, Any], constants: ImmutDict, functions: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]], line: int):
+    if istoken(variable_token, TT.IDENT):
+        not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
+        from_mutable = variables.get(variable_token.value, not_found_id)
+        if from_mutable == not_found_id:
+            from_immutable = constants.get(variable_token.value, not_found_id)
+            if from_immutable == not_found_id: return TT.ILLEGAL
+            else: return from_immutable
+        else: return from_mutable
+    else: return variable_token.value
 
 
 def record_until_endtoken(token_lines: list[list[Token]], starting_idx: int):
@@ -285,7 +301,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
 
     vars: dict[str, Any] = {}
     consts: ImmutDict = ImmutDict()
-    funcs: dict[str, tuple[tuple[tuple[tuple[str, bool]], list[Token]]]] = {
+    funcs: dict[str, Function] = {
         'AHH': (
             (),
             ([Token(TT.KEYWORD, 'log'), Token(TT.STRING, 'A' + ('H' * 100))],)
@@ -314,8 +330,13 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                 if istoken(toks[0], value='import'):
                     if len(toks) < 2: log_error("malformed import(missing item to import)", ln); return
                     if istoken(toks[1], (TT.STRING, TT.IDENT)):
-                        if istoken(toks[1], TT.IDENT): pass
-                        import_path = toks[1].value + '.mend' if '.' not in toks[1].value.removeprefix('./') else toks[1].value
+                        tok_value = toks[1].value
+                        if istoken(toks[1], TT.IDENT):
+                            var_result = get_variable(toks[1], toks, vars, consts, funcs, ln)
+                            if var_result == TT.ILLEGAL: log_error(f"unknown variable '{toks[1].value}'", ln); return
+                            if not isinstance(var_result, str): log_error(f"expected 'string', but got '{var_result}' of type {type(var_result).__name__} instead", ln); return
+                            tok_value = var_result
+                        import_path = tok_value + '.mend' if '.' not in toks[1].value.removeprefix('./') else toks[1].value
                         if not Path(import_path).exists(): log_error(f"malformed import(path '{import_path}' doesn't exist)", ln); return
                         try:
                             with open(import_path, 'rt') as imp_file:
@@ -329,7 +350,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                     else: log_error(f"malformed import(invalid import item '{toks[1].type}')", ln); return
 
                 elif istoken(toks[0], value='log'):
-                    var_result = get_variable(toks, vars, consts, funcs, ln)
+                    var_result = get_variable(toks[1], toks, vars, consts, funcs, ln)
                     if var_result == TT.ILLEGAL: log_error(f"could not log unknown variable '{toks[1].value}'", ln); return
                     print(var_result)
                 
@@ -386,7 +407,10 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                             if istoken(toks[1], value=tuple(consts.keys())): log_error(f"can't declare variable '{toks[1].value}', already exists", ln); return
                             if istoken(toks[3], (TT.FLOAT, TT.INT, TT.STRING, TT.BOOL)): consts.add(toks[1].value, toks[3].value)
                             elif istoken(toks[3], TT.KEYWORD):
-                                consts.add(toks[1].value,input('give input\n'))
+                                if istoken(toks[3], value='get'):
+                                    consts.add(toks[1].value, input('give input\n'))
+                                else:
+                                    log_error(f"malformed variable declaration(invalid keyword '{toks[3].value}')", ln); return
                             elif istoken(toks[3], TT.IDENT):
                                 not_found_id = f'{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}{randint(0, 9)}'
                                 from_mutable = consts.get(toks[1].value, not_found_id)
@@ -433,7 +457,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                 if istoken(toks[0], value=tuple(funcs)):
                     if len(toks) >= 3:
                         if istoken(toks[1], TT.LPAREN) and istoken(toks[-1], TT.RPAREN):
-                            returned = interpret(funcs[toks[0].value][1], True)
+                            returned = funcs[toks[0].value].run()
                             if returned != None: pass
                         else: log_error("malformed function call(missing parentheses)", ln); return
                     elif len(toks) != 1: log_error("malformed function call(mismatched parentheses)", ln); return
@@ -456,4 +480,4 @@ def run(code: str | list[str] | tuple[str]):
     interpret(token_lines)
 
 
-with open('./repeat_test.mend', 'rt') as f: run(f.read())
+#with open('./repeat_test.mend', 'rt') as f: run(f.read())
