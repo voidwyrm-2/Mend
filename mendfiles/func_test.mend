@@ -1,0 +1,5 @@
+func testfunc()
+    log "hello there"
+end
+
+testfunc()

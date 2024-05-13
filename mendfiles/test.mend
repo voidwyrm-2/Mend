@@ -1,10 +1,20 @@
 -- basic Mend language test
 
+-- '--', '//', ';', or '#' can be used for comments
+// this works
+; this works, as well
+# ditto
+
+
 get typed
 
 -- oh wow so cool
 
 log typed
+
+-- inspired by DreamBerd(https://github.com/TodePond/DreamBerd) the perfect programming language,
+-- you can use '?' at the end of non-comment lines for debug info
+-- log typed?
 
 
 --stop
@@ -50,7 +60,7 @@ stop
 -- function test
 
 func testfunc()
-    log "hello world"
+    log "hello there"
 end
 
 testfunc()

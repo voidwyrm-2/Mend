@@ -1,0 +1,23 @@
+/*
+A friend was also making a language at the time of writing,
+and for they're file importing they had a .oroproj file with the project settings and all the files that are needed
+So this is an example of what it might look like if I decide to do it
+*/
+
+
+// first the project name, this is the name of the entire Mend project
+name: "Example Mend Project"
+
+// then the project version
+projversion: "1.0.0"
+
+// then the version of the language used for the project
+// this will probably be useless...
+langversion: "1.0" // most recent version as of writing
+
+// then the required files/modules
+this will be a list of a bunch of paths or something, Idk
+required: [
+    "stdlib", // you can optionally choose not to include the standard library if you don't want to
+    "../MyCoolMendLibrary"
+]

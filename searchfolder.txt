@@ -1,0 +1,2 @@
+-- the folder that will be used as the root when using the 'run' command
+./mendfiles

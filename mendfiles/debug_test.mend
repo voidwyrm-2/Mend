@@ -1,0 +1,6 @@
+-- inspired by DreamBerd(https://github.com/TodePond/DreamBerd) the perfect programming language,
+-- you can use '?' at the end of non-comment lines for debug info
+
+-- this is a test of that
+
+log "Hello, Catdog!"?
