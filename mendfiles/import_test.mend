@@ -2,7 +2,7 @@
 
 -- you can also use variables, of course
 immut imp_path as "./import_this"
---log imp_path -- debug messge
+--log imp_path -- debug message
 import imp_path
 
 log x
