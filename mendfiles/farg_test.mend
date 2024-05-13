@@ -1,0 +1,7 @@
+-- test of function arguments
+
+func itest(x)
+    log x
+end
+
+itest("oh wow it works!")

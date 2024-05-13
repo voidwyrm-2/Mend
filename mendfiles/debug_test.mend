@@ -3,4 +3,6 @@
 
 -- this is a test of that
 
-log "Hello, Catdog!"?
+-- log "Hello, Catdog!"?
+
+Yell()?

@@ -23,9 +23,6 @@ KEYWORDS = [
     'is',
     'and',
     'or',
-    'less',
-    'more',
-    'not',
     'isnot',
     'immut',
     'mut',
@@ -36,6 +33,8 @@ KEYWORDS = [
     'return',
     'import',
     'stop',
+    'container',
+    'del',
 ]
 
 
@@ -74,6 +73,7 @@ def extend_dict(orig: dict, exentsion: dict, overwrite_existing: bool = False):
     return orig
 
 
+
 class TT(Enum):
     STRING = 'STRING'
     INT = 'INT'
@@ -93,6 +93,7 @@ class TT(Enum):
     RBRACE = 'RBRACE'
     DEBUG = 'DEBUG'
     STOP = 'STOP'
+    PERIOD = 'PERIOD'
     EOF = 'EOF'
 
 
@@ -103,7 +104,6 @@ class Token:
     
     def __repr__(self):
         return f'{self.type}: {self.value}'
-        
 
 
 class LineLexer:
@@ -193,23 +193,85 @@ class LineLexer:
         return Token(TT.COMMENT, comment_str)
 
 
+class MendFuncArg:
+    def __init__(self, name: str, required: bool = True) -> None:
+        self.__name = name
+        self.__required = required
+
+    def getname(self) -> str: return self.__name
+
+    def isrequired(self) -> bool: return self.__required
+
+    def copy(self): return MendFuncArg(self.__name, self.__required)
+
+    def __repr__(self) -> str: return self.__name if self.__required else {self.__name} + "(op)"
 
 class MendFunction:
-    def __init__(self, args: tuple[tuple[str, bool]], content: tuple[tuple[Token]]):
+    def __init__(self, name: str, args: list[MendFuncArg], content: list[list[Token]], is_bulitin: bool = False):
+        self.__name = name
         self.__args = args
         self.__content = content
+        self.__builtin = is_bulitin
     
-    def run(self, root_folder: str = '') -> tuple[dict[str, Any], ImmutDict, dict[str, Any]]: return interpret(self.__content, True, root_folder=root_folder)
+    def run(self, root_folder: str = '', arguments: list[list[Any, MendFuncArg]] = []) -> tuple[dict[str, Any], ImmutDict, dict[str, Any]]: return interpret(token_lines=self.__content, isfunc=True, funcargs=arguments, root_folder=root_folder)
 
-    def get_content(self) -> list[Token]: return self.__content
+    def get_content(self) -> list[list[Token]]: return self.__content
 
-    def get_args(self) -> tuple[tuple[str, bool]]: return self.__args
+    def get_args(self) -> list[MendFuncArg]: return self.__args
 
-    def has_args(self) -> bool: return len(self.__args) > 0
+    def hasargs(self) -> bool: return len(self.__args) > 0
 
-    def isempty(self): return len(self.__content) == 0
+    def isempty(self) -> bool: return len(self.__content) == 0
 
-    def copy(self): return MendFunction(self.__args, self.__content)
+    def isbuiltin(self) -> bool: return self.__builtin
+
+    def get_name(self) -> str: return self.__name
+
+    def hasname(self) -> bool: return self.__name.strip() != ''
+    
+    def rename(self, new_name: str) -> str: self.__name = new_name
+
+    def copy(self, use_self_name: bool = True, name_to_use_instead: str = ""): return MendFunction(self.__name, self.__args, self.__content, self.__builtin) if use_self_name else MendFunction(name_to_use_instead, self.__args, self.__content, self.__builtin)
+
+    def __repr__(self) -> str:
+        str_args = ', '.join([str(a) for a in self.__args])
+        out = f"function {self.__name}({str_args})" + "{" + f"{str(self.__content).removeprefix('[').removesuffix(']')}" + "}"
+        if self.__builtin: out = 'builtin ' + out
+        return out
+
+
+class NotNeeded: pass
+class MendContainer:
+    def __init__(self, vars: dict[str, Any], consts: ImmutDict, funcs: dict[str, MendFunction], containers: dict[str, Any]):
+        self.__vars = vars
+        self.__consts = consts
+        self.__funcs = funcs
+        self.__containers: dict[str, MendContainer] = containers
+    
+    def access(self, path: list[str], value: Any = NotNeeded) -> tuple[Any, bool]:
+        cpath = path.pop(0)
+        if cpath in list(self.__containers):
+            if not isinstance(value, MendContainer): log_error(f"invalid value '{value}' for container assignment"); return FullReturn(), False
+            if len(path) == 0: self.__containers[cpath] = value; return None, True
+            return self.__containers[cpath].access(path.copy(), value)
+        else:
+            if cpath in list(self.__vars):
+                if value != NotNeeded: self.__vars[cpath] = value; return None, True
+                else: return self.__vars[cpath], True
+            else:
+                if cpath in list(self.__consts.keys()):
+                    if value != NotNeeded: self.__consts[cpath] = value; return None, True
+                    else: return self.__consts[cpath], True
+                else:
+                    if cpath in list(self.__funcs):
+                        if value != NotNeeded: self.__funcs[cpath] = value; return None, True
+                        else: return self.__funcs[cpath], True
+                    else:
+                        return TT.ILLEGAL, False
+    
+    def copy(self): return MendContainer(self.__vars, self.__consts, self.__funcs, self.__containers)
+
+    def __repr__(self) -> str: return "container{\n" + f"   vars: {self.__vars}\n   consts: {self.__consts}\n   funcs: {self.__funcs}\n   containers: {self.__containers}\n" + "}"
 
 
 
@@ -290,6 +352,46 @@ def get_variable(variable_token: Token, tokens: list[Token], variables: dict[str
     else: return variable_token.value
 
 
+def scrape_funcinputs(tokens: list[Token], vars: dict[str, Any], consts: ImmutDict, funcargs: list[MendFuncArg], line: int) -> list[list[Any, MendFuncArg]]:
+    out = []
+    looking_for_comma = False
+    for i, t in enumerate(tokens):
+        
+        if i in (0, 1, len(tokens)-1): continue
+        i -= 3
+        if i > len(funcargs)-1: log_error(f"too many arguments given(expected {len(funcargs)}, but got {len([tx for tx in tokens if tx.type != TT.COMMA]) - 3} instead)", line); return TT.ILLEGAL
+        if looking_for_comma:
+            if not istoken(t, TT.COMMA): log_error("expected comma", line); return TT.ILLEGAL
+            looking_for_comma = False
+        else:
+            if istoken(t, TT.IDENT):
+                ident = t.value
+                if ident in list(vars): out.append([vars[ident], funcargs[i]])
+                else:
+                    if ident in list(consts.keys()): out.append([consts[ident], funcargs[i]])
+                    else: log_error(f"(funcinscrape)unknown variable '{ident}'", line); return TT.ILLEGAL
+            elif istoken(t, (TT.BOOL, TT.STRING, TT.INT, TT.FLOAT)): out.append([t.value, funcargs[i]])
+            else: log_error("expected 'identifier', 'string', 'int', 'float', or 'bool', but got '' instead", line); return TT.ILLEGAL
+            looking_for_comma = True
+    return out
+
+
+def scrape_funcargs(tokens: list[Token], line: int) -> list[MendFuncArg]:
+    out = []
+    for i, t in enumerate(tokens):
+        if i in (0, 1, 2, len(tokens)-1): continue
+        if istoken(t, TT.IDENT): out.append(MendFuncArg(t.value, True))
+        else: return log_error(f"expected identifier, but found '{t}' instead", line); TT.ILLEGAL
+    return out
+
+
+def inject_args(vars: dict[str, Any], fargs: list[list[Any, MendFuncArg]]):
+    for f in fargs:
+        value, mfa = f
+        vars[mfa.getname()] = value
+    return vars
+
+
 def record_until_endtoken(token_lines: list[list[Token]], starting_idx: int) -> list[list[Token]]:
     ln = starting_idx
     out = []
@@ -300,26 +402,35 @@ def record_until_endtoken(token_lines: list[list[Token]], starting_idx: int) -> 
 
 
 class Null:
-    def __str__(self): return 'null'
-
     def __repr__(self): return 'null'
 
 class FullReturn: pass
 
-def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: bool = False, root_folder: str = ''):
+def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: list[list[Any, MendFuncArg]] = [], isimported: bool = False, root_folder: str = ''):
     # flags
     jump_to_next_end = False
 
     vars: dict[str, Any] = {}
     consts: ImmutDict = ImmutDict()
     funcs: dict[str, MendFunction] = {
-        'AHH': MendFunction(
-            (),
-            (
-                (Token(TT.KEYWORD, 'log'), Token(TT.STRING, 'A' + ('H' * 50)))
-            )
+        'Yell': MendFunction(
+            'Yell',
+            [],
+            [
+                [
+                    Token(TT.KEYWORD, 'log'), Token(TT.STRING, 'A' + ('H' * 50))
+                ]
+            ],
+            True
         )
     }
+    if len(funcargs) > 0: vars = inject_args(vars, funcargs)
+
+    containers: dict[str, MendContainer] = {}
+
+    #print(funcs)
+
+    #print(vars, isfunc)
 
     ln = 0
     while ln < len(token_lines):
@@ -340,10 +451,12 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                     log_error(err, ln)
                     return FullReturn()
             
+            #print(toks, funcs, istoken(toks[0], value=tuple(funcs.keys())), "\n")
+            
             if istoken(toks[-1], TT.DEBUG):
                 print_debug = True
                 del toks[-1]
-                #print(toks)
+                if len(toks) < 1: ln += 1; continue
 
             if istoken(toks[0], TT.KEYWORD):
                 if istoken(toks[0], value='stop'): return TT.STOP
@@ -503,22 +616,30 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, isimported: 
                                 function_contents, ln = record_until_endtoken(token_lines, ln+1)
                                 ln += 1 # needed or the current line will be the function's end token
                                 if funcname in list(funcs): log_warning(f"declaration of function '{funcname}' is overriding a previous function, did you mean to do this?", ln)
-                                funcs[funcname] = MendFunction((), function_contents)
+                                if len(toks) > 4: gotten_args = scrape_funcargs(toks, ln)
+                                else: gotten_args = []
+                                funcs[funcname] = MendFunction(funcname, gotten_args, function_contents)
                             else: log_error("malformed function declaration(missing parentheses)", ln); return FullReturn()
                         else: log_error("malformed function declaration(missing function name)", ln); return FullReturn()
                     else: log_error("malformed function declaration(missing function name and parentheses)", ln); return FullReturn()
 
             elif istoken(toks[0], TT.IDENT):
-                if istoken(toks[0], value=tuple(funcs)):
+                if istoken(toks[0], value=tuple(funcs.keys())):
                     if len(toks) >= 3:
                         if istoken(toks[1], TT.LPAREN) and istoken(toks[-1], TT.RPAREN):
-                            returned = funcs[toks[0].value].run(root_folder)
+                            gottenfunction = funcs[toks[0].value]
+                            if len(toks) > 3: gotten_inputs = scrape_funcinputs(toks, vars, consts, gottenfunction.get_args(), ln)
+                            else: gotten_inputs = []
+                            if gotten_inputs == TT.ILLEGAL: return FullReturn()
+                            if print_debug: print('running function:'); print(gottenfunction); print('with inputs:'); print(gotten_inputs)
+                            returned = gottenfunction.run(root_folder, gotten_inputs)
                             if isinstance(returned, FullReturn): return FullReturn()
                             if returned != None: pass
                         else: log_error("malformed function call(missing parentheses)", ln); return FullReturn()
                     elif len(toks) != 1: log_error("malformed function call", ln); return FullReturn()
-                elif istoken(toks[0], value=tuple(vars)) or istoken(toks[0], value=tuple(consts.keys())): pass
-                else: log_error(f"unknown value '{toks[0].value}'", ln); return FullReturn()
+                elif istoken(toks[0], value=tuple(vars)) or istoken(toks[0], value=tuple(consts.keys())): log_warning(f"unused variable '{toks[0].value}'", ln)
+                else:
+                    log_error(f"unknown value '{toks[0].value}'", ln); return FullReturn()
 
         #print('vars', vars)
         #print('consts', consts)
