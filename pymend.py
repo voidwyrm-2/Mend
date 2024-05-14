@@ -407,6 +407,18 @@ def inject_args(vars: dict[str, Any], funcs: dict[str, MendFunction], fargs: lis
     return vars, funcs
 
 
+def import_mend_file(root_folder: str, import_path: str, vars: dict[str, Any], consts: ImmutDict, funcs: dict[str, MendFunction]):
+    with open(Path(root_folder, import_path), 'rt') as imp_file:
+        imported = interpret([[t for t in LineLexer(l).lex_to_tokens() if t.type != TT.COMMENT] for l in imp_file.read().split('\n')], isimported=True)
+        #print(imported)
+        if isinstance(imported, FullReturn): return FullReturn()
+        if imported != None:
+            vars = extend_dict(vars, imported[0], True)
+            consts.extend(imported[1])
+            funcs = extend_dict(funcs, imported[2], True)
+    return vars, consts, funcs
+
+
 def record_until_endtoken(token_lines: list[list[Token]], starting_idx: int) -> list[list[Token]]:
     ln = starting_idx
     #, keyword: str
@@ -507,20 +519,26 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
                             if var_result == TT.ILLEGAL: log_error(f"unknown variable '{toks[1].value}'", ln); return FullReturn()
                             if not isinstance(var_result, str): log_error(f"expected 'string', but got '{var_result}' of type {type(var_result).__name__} instead", ln); return FullReturn()
                             tok_value = var_result
-                        import_path = tok_value + '.mend' if '.' not in toks[1].value.removeprefix('./') else tok_value
+                        import_path = tok_value
                         if not Path(root_folder, import_path).exists():
-                            log_error(f"malformed import(path '{import_path}' doesn't exist)", ln)
-                            if print_debug: print([str(p) for p in Path('./').iterdir()])
-                            return FullReturn()
+                            import_path += '.mend'
+                            if not Path(root_folder, import_path).exists():
+                                log_error(f"malformed import(path '{import_path}' doesn't exist)", ln)
+                                #if print_debug: print([str(p) for p in Path('./').iterdir()])
+                                return FullReturn()
                         try:
-                            with open(Path(root_folder, import_path), 'rt') as imp_file:
-                                imported = interpret([[t for t in LineLexer(l).lex_to_tokens() if t.type != TT.COMMENT] for l in imp_file.read().split('\n')], isimported=True)
-                                #print(imported)
+                            if Path(root_folder, import_path).is_dir():
+                                for f in Path(root_folder, import_path).iterdir():
+                                    if not str(f).endswith('.mend'): continue
+                                    if print_debug: print(f"imported '{str(f)}'")
+                                    imported = import_mend_file(str(f).split('/', 1)[0], str(f).split('/', 1)[1], vars, consts, funcs)
+                                    if isinstance(imported, FullReturn): return FullReturn()
+                                    vars, consts, funcs = imported
+                            else:
+                                imported = import_mend_file(root_folder, import_path, vars, consts, funcs)
                                 if isinstance(imported, FullReturn): return FullReturn()
-                                if imported != None:
-                                    vars = extend_dict(vars, imported[0], True)
-                                    consts.extend(imported[1])
-                                    funcs = extend_dict(vars, imported[2], True)
+                                if print_debug: print(f"imported '{str(Path(root_folder, import_path))}'")
+                                vars, consts, funcs = imported
                         except Exception as e: log_error(f"malformed import({e})", ln); return FullReturn()
                     else: log_error(f"malformed import(invalid import item '{toks[1].type}')", ln); return FullReturn()
 

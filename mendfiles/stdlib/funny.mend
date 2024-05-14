@@ -1,3 +1,5 @@
 func Yell() @builtin
     log "AHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH"
 end
+
+log "funny works"
