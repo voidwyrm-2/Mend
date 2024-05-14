@@ -1,0 +1,5 @@
+func repfunc()
+    repeat 10
+        log "NO"
+    end
+end

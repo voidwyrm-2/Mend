@@ -94,6 +94,7 @@ class TT(Enum):
     DEBUG = 'DEBUG'
     STOP = 'STOP'
     PERIOD = 'PERIOD'
+    STATELABEL = 'STATELABEL'
     EOF = 'EOF'
 
 
@@ -136,6 +137,7 @@ class LineLexer:
             elif self.c_char == '/': tokens.append(self.make_comment('/'))
             elif self.c_char == '#': tokens.append(self.make_comment())
             elif self.c_char == ';': tokens.append(self.make_comment())
+            elif self.c_char == '@': tokens.append(self.make_statelabel())
             elif self.c_char == '?':
                 if self.idx == len(self.text)-1: tokens.append(Token(TT.DEBUG)); self.advance()
                 else: tokens.append(Token(TT.ILLEGAL, (self.c_char, "question mark must be at end of line"))); self.advance()
@@ -176,6 +178,17 @@ class LineLexer:
         if ident_str in KEYWORDS:
             return Token(TT.KEYWORD, ident_str)
         return Token(TT.IDENT, ident_str)
+    
+    def make_statelabel(self):
+        statelabel_str = ''
+
+        self.advance()
+        if self.c_char not in VALID_FOR_VARNAMES: return Token(TT.ILLEGAL, (self.c_char, "expected label name after '@'"))
+
+        while self.c_char != None and self.c_char in VALID_FOR_VARNAMES:
+            statelabel_str += self.c_char
+            self.advance()
+        return Token(TT.STATELABEL, statelabel_str)
 
     def make_comment(self, next_char_needed: str = ''):
         comment_str = ''
@@ -352,11 +365,10 @@ def get_variable(variable_token: Token, tokens: list[Token], variables: dict[str
     else: return variable_token.value
 
 
-def scrape_funcinputs(tokens: list[Token], vars: dict[str, Any], consts: ImmutDict, funcargs: list[MendFuncArg], line: int) -> list[list[Any, MendFuncArg]]:
+def scrape_funcinputs(tokens: list[Token], vars: dict[str, Any], consts: ImmutDict, funcs: dict[str, MendFunction], funcargs: list[MendFuncArg], line: int) -> list[list[Any, MendFuncArg]]:
     out = []
     looking_for_comma = False
     for i, t in enumerate(tokens):
-        
         if i in (0, 1, len(tokens)-1): continue
         i -= 3
         if i > len(funcargs)-1: log_error(f"too many arguments given(expected {len(funcargs)}, but got {len([tx for tx in tokens if tx.type != TT.COMMA]) - 3} instead)", line); return TT.ILLEGAL
@@ -369,7 +381,9 @@ def scrape_funcinputs(tokens: list[Token], vars: dict[str, Any], consts: ImmutDi
                 if ident in list(vars): out.append([vars[ident], funcargs[i]])
                 else:
                     if ident in list(consts.keys()): out.append([consts[ident], funcargs[i]])
-                    else: log_error(f"(funcinscrape)unknown variable '{ident}'", line); return TT.ILLEGAL
+                    else:
+                        if ident in list(funcs): out.append([funcs[ident].copy(), funcargs[i]])
+                        else: log_error(f"(funcinscrape)unknown variable '{ident}'", line); return TT.ILLEGAL
             elif istoken(t, (TT.BOOL, TT.STRING, TT.INT, TT.FLOAT)): out.append([t.value, funcargs[i]])
             else: log_error("expected 'identifier', 'string', 'int', 'float', or 'bool', but got '' instead", line); return TT.ILLEGAL
             looking_for_comma = True
@@ -385,19 +399,39 @@ def scrape_funcargs(tokens: list[Token], line: int) -> list[MendFuncArg]:
     return out
 
 
-def inject_args(vars: dict[str, Any], fargs: list[list[Any, MendFuncArg]]):
+def inject_args(vars: dict[str, Any], funcs: dict[str, MendFunction], fargs: list[list[Any, MendFuncArg]]):
     for f in fargs:
         value, mfa = f
+        if isinstance(value, MendFunction): funcs[mfa.getname()] = value
         vars[mfa.getname()] = value
-    return vars
+    return vars, funcs
 
 
 def record_until_endtoken(token_lines: list[list[Token]], starting_idx: int) -> list[list[Token]]:
     ln = starting_idx
+    #, keyword: str
+    uses_end = [
+        'func',
+        'repeat'
+    ]
+    '''
+    if keyword not in uses_end:
+        temp = uses_end.pop()
+        temp_joined = ', '.join([f"'{u}'" for u in uses_end])
+        raise Exception(f"(record_until_endtoken) expected {temp_joined}, or '{temp}' as keyword, but got '{keyword}' instead")
+    '''
     out = []
+    nest = 0
     while ln < len(token_lines):
-        if istoken(token_lines[ln][0], TT.KEYWORD, 'end'): break
-        else: out.append(token_lines[ln]); ln += 1
+        #print(ln, token_lines[ln], nest)
+        if len(token_lines[ln]) > 0:
+            if istoken(token_lines[ln][0], TT.KEYWORD, 'end'):
+                if nest == 0: break
+                else: out.append(token_lines[ln]); nest -= 1
+            else:
+                if istoken(token_lines[ln][0], TT.KEYWORD, tuple(uses_end)): nest += 1
+                out.append(token_lines[ln]); ln += 1
+        else: ln += 1
     return out, ln
 
 
@@ -412,8 +446,8 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
 
     vars: dict[str, Any] = {}
     consts: ImmutDict = ImmutDict()
-    funcs: dict[str, MendFunction] = {
-        'Yell': MendFunction(
+    '''
+    'Yell': MendFunction(
             'Yell',
             [],
             [
@@ -423,7 +457,8 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
             ],
             True
         )
-    }
+    '''
+    funcs: dict[str, MendFunction] = {}
     if len(funcargs) > 0: vars = inject_args(vars, funcargs)
 
     containers: dict[str, MendContainer] = {}
@@ -431,6 +466,8 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
     #print(funcs)
 
     #print(vars, isfunc)
+
+    ignore_warnings = 0
 
     ln = 0
     while ln < len(token_lines):
@@ -611,14 +648,22 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
                 elif istoken(toks[0], value='func'):
                     if len(toks) >= 3:
                         if istoken(toks[1], TT.IDENT):
+                            is_a_builtin_func = False
+                            if len(toks) >= 5:
+                                if istoken(toks[-1], TT.STATELABEL, 'builtin'):
+                                    del toks[-1]
+                                    is_a_builtin_func = True
                             if istoken(toks[2], TT.LPAREN) and istoken(toks[-1], TT.RPAREN):
                                 funcname = toks[1].value
                                 function_contents, ln = record_until_endtoken(token_lines, ln+1)
+                                #print(function_contents)
                                 ln += 1 # needed or the current line will be the function's end token
-                                if funcname in list(funcs): log_warning(f"declaration of function '{funcname}' is overriding a previous function, did you mean to do this?", ln)
+                                if funcname in list(funcs) and ignore_warnings == 0:
+                                    if funcs[funcname].isbuiltin(): log_warning(f"declaration of function '{funcname}' is overriding a builtin function, did you mean to do this?(to stop this warning, add '@ignorewarning' on the line before)", ln)
+                                    else: log_warning(f"declaration of function '{funcname}' is overriding a previous function, did you mean to do this?(to stop this warning, add '@ignorewarning' on the line before)", ln)
                                 if len(toks) > 4: gotten_args = scrape_funcargs(toks, ln)
                                 else: gotten_args = []
-                                funcs[funcname] = MendFunction(funcname, gotten_args, function_contents)
+                                funcs[funcname] = MendFunction(funcname, gotten_args, function_contents, is_a_builtin_func)
                             else: log_error("malformed function declaration(missing parentheses)", ln); return FullReturn()
                         else: log_error("malformed function declaration(missing function name)", ln); return FullReturn()
                     else: log_error("malformed function declaration(missing function name and parentheses)", ln); return FullReturn()
@@ -628,7 +673,7 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
                     if len(toks) >= 3:
                         if istoken(toks[1], TT.LPAREN) and istoken(toks[-1], TT.RPAREN):
                             gottenfunction = funcs[toks[0].value]
-                            if len(toks) > 3: gotten_inputs = scrape_funcinputs(toks, vars, consts, gottenfunction.get_args(), ln)
+                            if len(toks) > 3: gotten_inputs = scrape_funcinputs(toks, vars, consts, funcs, gottenfunction.get_args(), ln)
                             else: gotten_inputs = []
                             if gotten_inputs == TT.ILLEGAL: return FullReturn()
                             if print_debug: print('running function:'); print(gottenfunction); print('with inputs:'); print(gotten_inputs)
@@ -637,13 +682,20 @@ def interpret(token_lines: list[list[Token]], isfunc: bool = False, funcargs: li
                             if returned != None: pass
                         else: log_error("malformed function call(missing parentheses)", ln); return FullReturn()
                     elif len(toks) != 1: log_error("malformed function call", ln); return FullReturn()
-                elif istoken(toks[0], value=tuple(vars)) or istoken(toks[0], value=tuple(consts.keys())): log_warning(f"unused variable '{toks[0].value}'", ln)
+                elif istoken(toks[0], value=tuple(vars)) or istoken(toks[0], value=tuple(consts.keys())):
+                    if ignore_warnings == 0: log_warning(f"unused variable '{toks[0].value}'", ln)
                 else:
                     log_error(f"unknown value '{toks[0].value}'", ln); return FullReturn()
+            
+            elif istoken(toks[0], TT.STATELABEL):
+                if istoken(toks[0], value='ignorewarning'): ignore_warnings = 2
+                else: log_error(f"unknown statelabel '{toks[0].value}'", ln); return FullReturn()
+
 
         #print('vars', vars)
         #print('consts', consts)
         
+        if ignore_warnings > 0: ignore_warnings -= 1
         ln += 1
     if isimported: return vars, consts, funcs
 
